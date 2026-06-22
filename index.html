@@ -42,7 +42,6 @@ font-size: 16px;
 font-weight: bold;
 border-radius: 8px;
 cursor: pointer;
-transition: background 0.2s;
 width: 85%;
 }
 button:hover { background: #00f5ff; color: #121212; }
@@ -52,6 +51,7 @@ margin-top: 20px;
 color: #00adb5;
 font-weight: bold;
 min-height: 24px;
+white-space: pre-wrap;
 }
 #output-area {
 margin-top: 35px;
@@ -66,7 +66,6 @@ padding: 14px 28px;
 font-weight: bold;
 border-radius: 8px;
 width: 80%;
-transition: background 0.2s;
 }
 .desmos-link-btn:hover { background: #ff5c4d; }
 </style>
@@ -80,7 +79,7 @@ transition: background 0.2s;
 <input type="file" id="audioSource" accept="audio/*"><br>
 <button id="compileBtn">Convert Song Data</button>
 
-<div id="status-monitor"></div>
+<div id="status-monitor">Ready and waiting...</div>
 
 <div id="output-area">
 <h3 style="color: #4caf50;">🎉 Song Map Compiled!</h3>
@@ -95,45 +94,60 @@ const fileSelector = document.getElementById('audioSource');
 const statusLabel = document.getElementById('status-monitor');
 const outputPanel = document.getElementById('output-area');
 const finalLink = document.getElementById('desmosTargetUrl');
+const compileBtn = document.getElementById('compileBtn');
 
 if (!fileSelector.files[0]) {
-statusLabel.innerText = "❌ Please select an audio file first!";
+statusLabel.innerHTML = "<span style='color:#ff3333;'>❌ Please select an audio file first!</span>";
 return;
 }
 
-statusLabel.innerText = "⏳ Reading file bytes into memory...";
+statusLabel.innerText = "⏳ Initializing audio environment...";
 outputPanel.style.display = "none";
-document.getElementById('compileBtn').disabled = true;
+compileBtn.disabled = true;
 
 try {
-// Initialize clean, hardware-isolated Web Audio context
+// Fix 1: Force context activation directly on user click to bypass browser safety bans
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+if (audioCtx.state === 'suspended') {
+await audioCtx.resume();
+}
+
+const file = fileSelector.files[0];
+statusLabel.innerText = ⏳ Loading "${file.name}" into memory...`;
+
 const fileReader = new FileReader();
+
+fileReader.onerror = () => {
+throw new Error("Failed to read file from disk storage.");
+};
 
 fileReader.onload = async (event) => {
 try {
-statusLabel.innerText = "🎛️ Decoding audio array buffers...";
-const audioBuffer = await audioCtx.decodeAudioData(event.target.result);
+statusLabel.innerText = "🎛️ Decoding audio file formats... (Stay on this page)";
 
-statusLabel.innerText = "⚡ Analyzing wave frequencies (Autocorrelation)...";
+// Fix 2: Wrap decode in a timeout to let the UI render status text updates properly
+setTimeout(async () => {
+try {
+const audioBuffer = await audioCtx.decodeAudioData(event.target.result).catch(err => {
+throw new Error("The browser couldn't read this audio format. Try a standard MP3 or WAV file.");
+});
+
+statusLabel.innerText = "⚡ Analyzing frequencies... (This may take 5-10 seconds)";
 
 const sampleRate = audioBuffer.sampleRate;
-// Limit to 30 seconds to prevent Desmos URL data lengths from breaking
-const trackDuration = Math.min(audioBuffer.duration, 30);
-const timeStep = 0.1; // Evaluate exactly 10 sound frames per second
+// Clip track length to a safe 20 seconds maximum to prevent browser URL overflow limits
+const trackDuration = Math.min(audioBuffer.duration, 20);
+const timeStep = 0.1;
 const totalSteps = Math.floor(trackDuration / timeStep);
 
 const frequenciesList = [];
 const gainsList = [];
-
-// Extract the raw PCM amplitude floats from Channel 0 (Mono/Left)
 const rawSignal = audioBuffer.getChannelData(0);
 
-// Loop through the song timeline chronologically
 for (let step = 0; step < totalSteps; step++) {
 const currentTime = step * timeStep;
 const startSampleIndex = Math.floor(currentTime * sampleRate);
-const windowSize = 2048; // Size of chunk to inspect
+const windowSize = 2048;
 
 const signalWindow = new Float32Array(windowSize);
 for (let j = 0; j < windowSize; j++) {
@@ -142,7 +156,6 @@ signalWindow[j] = rawSignal[startSampleIndex + j];
 }
 }
 
-// Step A: Calculate Root Mean Square (Volume)
 let energySum = 0;
 for (let k = 0; k < windowSize; k++) {
 energySum += signalWindow[k] * signalWindow[k];
@@ -151,9 +164,7 @@ let rmsVolume = Math.sqrt(energySum / windowSize);
 
 let calculatedPitch = 0;
 
-// Noise floor threshold gate (ignore pure background hiss/silence)
-if (rmsVolume > 0.015) {
-// Step B: Time-Domain Autocorrelation (YIN pitch detection principle)
+if (rmsVolume > 0.02) {
 let autocorrelationValues = new Float32Array(windowSize / 2);
 for (let lag = 0; lag < windowSize / 2; lag++) {
 for (let sampleIdx = 0; sampleIdx < windowSize / 2; sampleIdx++) {
@@ -161,7 +172,6 @@ autocorrelationValues[lag] += signalWindow[sampleIdx] * signalWindow[sampleIdx +
 }
 }
 
-// Step C: Detect the first prominent peak after the zero-lag drop
 let fundamentalPeriod = -1;
 for (let m = 1; m < (windowSize / 2) - 1; m++) {
 if (autocorrelationValues[m] > autocorrelationValues[m - 1] && autocorrelationValues[m] > autocorrelationValues[m + 1]) {
@@ -170,25 +180,20 @@ break;
 }
 }
 
-// Step D: Translate the sample period back into Hz (frequency)
 if (fundamentalPeriod !== -1 && fundamentalPeriod > 0) {
 calculatedPitch = sampleRate / fundamentalPeriod;
-
-// Strip mathematical anomalies outside common musical fundamental zones (C2 to C7)
-if (calculatedPitch < 65 || calculatedPitch > 2100) {
+if (calculatedPitch < 65 || calculatedPitch > 2000) {
 calculatedPitch = 0;
 }
 }
 }
 
-// Save values into lists
 frequenciesList.push(calculatedPitch > 0 ? Math.round(calculatedPitch) : 0);
 gainsList.push(calculatedPitch > 0 ? Math.min(Math.round(rmsVolume * 100) / 100, 1) : 0);
 }
 
-statusLabel.innerText = "📦 Serializing Desmos state tables...";
+statusLabel.innerText = "包装 📦 Shipping configuration to Desmos Link...";
 
-// Build a raw state configuration that mirrors a native Desmos saved state JSON file
 const desmosGraphConfig = {
 version: 9,
 expressions: {
@@ -201,31 +206,34 @@ list: [
 }
 };
 
-// Safe, URI-compliant Base64 encoding structure without platform dependency glitches
 const stringifiedJson = JSON.stringify(desmosGraphConfig);
 const safeBase64 = btoa(encodeURIComponent(stringifiedJson).replace(/%([0-9A-F]{2})/g, (match, hexByte) => {
 return String.fromCharCode('0x' + hexByte);
 }));
 
-// Append base64 state string directly onto the native Desmos URL receiver parameter
-finalLink.href = https://www.desmos.com/calculator?state=${safeBase64};
+finalLink.href = https://www.desmos.com/calculator?state=${safeBase64}`;
 
 statusLabel.innerText = "";
 outputPanel.style.display = "block";
+compileBtn.disabled = false;
+
+} catch (innerErr) {
+statusLabel.innerHTML = <span style='color:#ff3333;'&gt;❌ Processing Error: ${innerErr.message}</span>`;
+compileBtn.disabled = false;
+}
+}, 50);
 
 } catch (decodeError) {
-statusLabel.innerText = "❌ Core decoding failure. Try an alternative file type.";
-console.error(decodeError);
-} finally {
-document.getElementById('compileBtn').disabled = false;
+statusLabel.innerHTML = "<span style='color:#ff3333;'>❌ File format error. Please try a different song file (.mp3 or .wav).</span>";
+compileBtn.disabled = false;
 }
 };
 
-fileReader.readAsArrayBuffer(fileSelector.files[0]);
+fileReader.readAsArrayBuffer(file);
 
 } catch (generalError) {
-statusLabel.innerText = "❌ File interface initialization failed.";
-document.getElementById('compileBtn').disabled = false;
+statusLabel.innerHTML = <span style='color:#ff3333;'&gt;❌ System Error:${generalError.message}</span>`;
+compileBtn.disabled = false;
 }
 });
 </script>
