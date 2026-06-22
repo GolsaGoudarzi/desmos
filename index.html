@@ -1,0 +1,38 @@
+')}]` },
+                                    { type: "expression", id: "3", latex: "t=0" },
+                                    { type: "expression", id: "4", latex: "tone(F[floor(t)+1],G[floor(t)+1])" },
+                                    { type: "expression", id: "5", latex: "y=F[floor(x)+1]", color: "#00adb5" }
+                                ]
+                            }
+                        };
+
+                        // Safe base64 encoding translation structure
+                        const jsonStr = JSON.stringify(desmosState);
+                        const b64Data = btoa(encodeURIComponent(jsonStr).replace(/%([0-9A-F]{2})/g, (match, p1) => {
+                            return String.fromCharCode('0x' + p1);
+                        }));
+                        
+                        // Assign final parsed dashboard target vector
+                        document.getElementById('desmosLink').href = `https://www.desmos.com/calculator?state=${b64Data}`;
+                        
+                        status.innerText = "";
+                        resultDiv.style.display = "block";
+
+                    } catch (err) {
+                        status.innerText = "❌ Error processing internal audio wave maps.";
+                        console.error(err);
+                    } finally {
+                        document.getElementById('processBtn').disabled = false;
+                    }
+                };
+
+                fileReader.readAsArrayBuffer(fileInput.files[0]);
+
+            } catch (err) {
+                status.innerText = "❌ Browser configuration mismatch.";
+                document.getElementById('processBtn').disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
