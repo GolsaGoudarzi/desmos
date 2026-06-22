@@ -51,7 +51,6 @@ margin-top: 20px;
 color: #00adb5;
 font-weight: bold;
 min-height: 24px;
-white-space: pre-wrap;
 }
 #output-area {
 margin-top: 35px;
@@ -89,7 +88,10 @@ width: 80%;
 </div>
 
 <script>
+console.log("Application script successfully loaded and running.");
+
 document.getElementById('compileBtn').addEventListener('click', async () => {
+console.log("Convert button clicked!");
 const fileSelector = document.getElementById('audioSource');
 const statusLabel = document.getElementById('status-monitor');
 const outputPanel = document.getElementById('output-area');
@@ -106,36 +108,28 @@ outputPanel.style.display = "none";
 compileBtn.disabled = true;
 
 try {
-// Fix 1: Force context activation directly on user click to bypass browser safety bans
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 if (audioCtx.state === 'suspended') {
 await audioCtx.resume();
 }
 
 const file = fileSelector.files[0];
-statusLabel.innerText = ⏳ Loading "${file.name}" into memory...`;
+console.log("Selected file:", file.name, "Size:", file.size);
+statusLabel.innerText = ⏳ Loading "${file.name}"...`;
 
 const fileReader = new FileReader();
 
-fileReader.onerror = () => {
-throw new Error("Failed to read file from disk storage.");
-};
-
 fileReader.onload = async (event) => {
-try {
-statusLabel.innerText = "🎛️ Decoding audio file formats... (Stay on this page)";
+console.log("File loaded successfully into memory. Starting decode...");
+statusLabel.innerText = "🎛️ Decoding audio file formats...";
 
-// Fix 2: Wrap decode in a timeout to let the UI render status text updates properly
 setTimeout(async () => {
 try {
-const audioBuffer = await audioCtx.decodeAudioData(event.target.result).catch(err => {
-throw new Error("The browser couldn't read this audio format. Try a standard MP3 or WAV file.");
-});
-
-statusLabel.innerText = "⚡ Analyzing frequencies... (This may take 5-10 seconds)";
+const audioBuffer = await audioCtx.decodeAudioData(event.target.result);
+console.log("Audio decoding complete. Duration:", audioBuffer.duration, "channels:", audioBuffer.numberOfChannels);
+statusLabel.innerText = "⚡ Analyzing frequencies... (Please wait)";
 
 const sampleRate = audioBuffer.sampleRate;
-// Clip track length to a safe 20 seconds maximum to prevent browser URL overflow limits
 const trackDuration = Math.min(audioBuffer.duration, 20);
 const timeStep = 0.1;
 const totalSteps = Math.floor(trackDuration / timeStep);
@@ -161,7 +155,6 @@ for (let k = 0; k < windowSize; k++) {
 energySum += signalWindow[k] * signalWindow[k];
 }
 let rmsVolume = Math.sqrt(energySum / windowSize);
-
 let calculatedPitch = 0;
 
 if (rmsVolume > 0.02) {
@@ -192,7 +185,8 @@ frequenciesList.push(calculatedPitch > 0 ? Math.round(calculatedPitch) : 0);
 gainsList.push(calculatedPitch > 0 ? Math.min(Math.round(rmsVolume * 100) / 100, 1) : 0);
 }
 
-statusLabel.innerText = "包装 📦 Shipping configuration to Desmos Link...";
+console.log("Pitch analysis finished. Generating Desmos link...");
+statusLabel.innerText = "📦 Shipping configuration to Desmos Link...";
 
 const desmosGraphConfig = {
 version: 9,
@@ -216,22 +210,20 @@ finalLink.href = https://www.desmos.com/calculator?state=${safeBase64}`;
 statusLabel.innerText = "";
 outputPanel.style.display = "block";
 compileBtn.disabled = false;
+console.log("Success! Link injected.");
 
 } catch (innerErr) {
+console.error("Internal processing error:", innerErr);
 statusLabel.innerHTML = <span style='color:#ff3333;'&gt;❌ Processing Error: ${innerErr.message}</span>`;
 compileBtn.disabled = false;
 }
 }, 50);
-
-} catch (decodeError) {
-statusLabel.innerHTML = "<span style='color:#ff3333;'>❌ File format error. Please try a different song file (.mp3 or .wav).</span>";
-compileBtn.disabled = false;
-}
 };
 
 fileReader.readAsArrayBuffer(file);
 
 } catch (generalError) {
+console.error("Global crash catcher:", generalError);
 statusLabel.innerHTML = <span style='color:#ff3333;'&gt;❌ System Error:${generalError.message}</span>`;
 compileBtn.disabled = false;
 }
