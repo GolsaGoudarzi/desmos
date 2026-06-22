@@ -1,38 +1,233 @@
-')}]` },
-                                    { type: "expression", id: "3", latex: "t=0" },
-                                    { type: "expression", id: "4", latex: "tone(F[floor(t)+1],G[floor(t)+1])" },
-                                    { type: "expression", id: "5", latex: "y=F[floor(x)+1]", color: "#00adb5" }
-                                ]
-                            }
-                        };
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audio to Desmos Synth Compiler</title>
+<style>
+body {
+font-family: 'Segoe UI', system-ui, sans-serif;
+background: #121212;
+color: #e0e0e0;
+max-width: 600px;
+margin: 50px auto;
+padding: 20px;
+text-align: center;
+}
+.app-card {
+background: #1e1e1e;
+padding: 40px;
+border-radius: 16px;
+border: 1px solid #333;
+box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+}
+h2 { color: #ffffff; margin-top: 0; }
+p { color: #aaa; font-size: 14px; }
+input[type="file"] {
+margin: 25px 0;
+padding: 10px;
+background: #2a2a2a;
+border-radius: 8px;
+border: 1px dashed #555;
+color: #fff;
+width: 80%;
+cursor: pointer;
+}
+button {
+background: #00adb5;
+color: white;
+border: none;
+padding: 14px 28px;
+font-size: 16px;
+font-weight: bold;
+border-radius: 8px;
+cursor: pointer;
+transition: background 0.2s;
+width: 85%;
+}
+button:hover { background: #00f5ff; color: #121212; }
+button:disabled { background: #444; color: #888; cursor: not-allowed; }
+#status-monitor {
+margin-top: 20px;
+color: #00adb5;
+font-weight: bold;
+min-height: 24px;
+}
+#output-area {
+margin-top: 35px;
+display: none;
+}
+.desmos-link-btn {
+background: #ea4335;
+display: inline-block;
+text-decoration: none;
+color: white;
+padding: 14px 28px;
+font-weight: bold;
+border-radius: 8px;
+width: 80%;
+transition: background 0.2s;
+}
+.desmos-link-btn:hover { background: #ff5c4d; }
+</style>
+</head>
+<body>
 
-                        // Safe base64 encoding translation structure
-                        const jsonStr = JSON.stringify(desmosState);
-                        const b64Data = btoa(encodeURIComponent(jsonStr).replace(/%([0-9A-F]{2})/g, (match, p1) => {
-                            return String.fromCharCode('0x' + p1);
-                        }));
-                        
-                        // Assign final parsed dashboard target vector
-                        document.getElementById('desmosLink').href = `https://www.desmos.com/calculator?state=${b64Data}`;
-                        
-                        status.innerText = "";
-                        resultDiv.style.display = "block";
+<div class="app-card">
+<h2>🎵 Audio to Desmos Compiler</h2>
+<p>Convert any audio track into an editable musical step-graph inside Desmos.</p>
 
-                    } catch (err) {
-                        status.innerText = "❌ Error processing internal audio wave maps.";
-                        console.error(err);
-                    } finally {
-                        document.getElementById('processBtn').disabled = false;
-                    }
-                };
+<input type="file" id="audioSource" accept="audio/*"><br>
+<button id="compileBtn">Convert Song Data</button>
 
-                fileReader.readAsArrayBuffer(fileInput.files[0]);
+<div id="status-monitor"></div>
 
-            } catch (err) {
-                status.innerText = "❌ Browser configuration mismatch.";
-                document.getElementById('processBtn').disabled = false;
-            }
-        });
-    </script>
+<div id="output-area">
+<h3 style="color: #4caf50;">🎉 Song Map Compiled!</h3>
+<p>Click below to open your interactive synthesizer graph:</p>
+<a id="desmosTargetUrl" class="desmos-link-btn" target="_blank">🚀 Open in Desmos Calculator</a>
+</div>
+</div>
+
+<script>
+document.getElementById('compileBtn').addEventListener('click', async () => {
+const fileSelector = document.getElementById('audioSource');
+const statusLabel = document.getElementById('status-monitor');
+const outputPanel = document.getElementById('output-area');
+const finalLink = document.getElementById('desmosTargetUrl');
+
+if (!fileSelector.files[0]) {
+statusLabel.innerText = "❌ Please select an audio file first!";
+return;
+}
+
+statusLabel.innerText = "⏳ Reading file bytes into memory...";
+outputPanel.style.display = "none";
+document.getElementById('compileBtn').disabled = true;
+
+try {
+// Initialize clean, hardware-isolated Web Audio context
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const fileReader = new FileReader();
+
+fileReader.onload = async (event) => {
+try {
+statusLabel.innerText = "🎛️ Decoding audio array buffers...";
+const audioBuffer = await audioCtx.decodeAudioData(event.target.result);
+
+statusLabel.innerText = "⚡ Analyzing wave frequencies (Autocorrelation)...";
+
+const sampleRate = audioBuffer.sampleRate;
+// Limit to 30 seconds to prevent Desmos URL data lengths from breaking
+const trackDuration = Math.min(audioBuffer.duration, 30);
+const timeStep = 0.1; // Evaluate exactly 10 sound frames per second
+const totalSteps = Math.floor(trackDuration / timeStep);
+
+const frequenciesList = [];
+const gainsList = [];
+
+// Extract the raw PCM amplitude floats from Channel 0 (Mono/Left)
+const rawSignal = audioBuffer.getChannelData(0);
+
+// Loop through the song timeline chronologically
+for (let step = 0; step < totalSteps; step++) {
+const currentTime = step * timeStep;
+const startSampleIndex = Math.floor(currentTime * sampleRate);
+const windowSize = 2048; // Size of chunk to inspect
+
+const signalWindow = new Float32Array(windowSize);
+for (let j = 0; j < windowSize; j++) {
+if (startSampleIndex + j < rawSignal.length) {
+signalWindow[j] = rawSignal[startSampleIndex + j];
+}
+}
+
+// Step A: Calculate Root Mean Square (Volume)
+let energySum = 0;
+for (let k = 0; k < windowSize; k++) {
+energySum += signalWindow[k] * signalWindow[k];
+}
+let rmsVolume = Math.sqrt(energySum / windowSize);
+
+let calculatedPitch = 0;
+
+// Noise floor threshold gate (ignore pure background hiss/silence)
+if (rmsVolume > 0.015) {
+// Step B: Time-Domain Autocorrelation (YIN pitch detection principle)
+let autocorrelationValues = new Float32Array(windowSize / 2);
+for (let lag = 0; lag < windowSize / 2; lag++) {
+for (let sampleIdx = 0; sampleIdx < windowSize / 2; sampleIdx++) {
+autocorrelationValues[lag] += signalWindow[sampleIdx] * signalWindow[sampleIdx + lag];
+}
+}
+
+// Step C: Detect the first prominent peak after the zero-lag drop
+let fundamentalPeriod = -1;
+for (let m = 1; m < (windowSize / 2) - 1; m++) {
+if (autocorrelationValues[m] > autocorrelationValues[m - 1] && autocorrelationValues[m] > autocorrelationValues[m + 1]) {
+fundamentalPeriod = m;
+break;
+}
+}
+
+// Step D: Translate the sample period back into Hz (frequency)
+if (fundamentalPeriod !== -1 && fundamentalPeriod > 0) {
+calculatedPitch = sampleRate / fundamentalPeriod;
+
+// Strip mathematical anomalies outside common musical fundamental zones (C2 to C7)
+if (calculatedPitch < 65 || calculatedPitch > 2100) {
+calculatedPitch = 0;
+}
+}
+}
+
+// Save values into lists
+frequenciesList.push(calculatedPitch > 0 ? Math.round(calculatedPitch) : 0);
+gainsList.push(calculatedPitch > 0 ? Math.min(Math.round(rmsVolume * 100) / 100, 1) : 0);
+}
+
+statusLabel.innerText = "📦 Serializing Desmos state tables...";
+
+// Build a raw state configuration that mirrors a native Desmos saved state JSON file
+const desmosGraphConfig = {
+version: 9,
+expressions: {
+list: [
+{ type: "expression", id: "list_f", latex: F=[${frequenciesList.join(',')}]}, { type: "expression", id: "list_g", latex:G=[${gainsList.join(',')}] },
+{ type: "expression", id: "var_t", latex: "t=0" },
+{ type: "expression", id: "engine", latex: "tone(F[floor(t)+1],G[floor(t)+1])" },
+{ type: "expression", id: "plot", latex: "y=F[floor(x)+1]", color: "#00adb5" }
+]
+}
+};
+
+// Safe, URI-compliant Base64 encoding structure without platform dependency glitches
+const stringifiedJson = JSON.stringify(desmosGraphConfig);
+const safeBase64 = btoa(encodeURIComponent(stringifiedJson).replace(/%([0-9A-F]{2})/g, (match, hexByte) => {
+return String.fromCharCode('0x' + hexByte);
+}));
+
+// Append base64 state string directly onto the native Desmos URL receiver parameter
+finalLink.href = https://www.desmos.com/calculator?state=${safeBase64};
+
+statusLabel.innerText = "";
+outputPanel.style.display = "block";
+
+} catch (decodeError) {
+statusLabel.innerText = "❌ Core decoding failure. Try an alternative file type.";
+console.error(decodeError);
+} finally {
+document.getElementById('compileBtn').disabled = false;
+}
+};
+
+fileReader.readAsArrayBuffer(fileSelector.files[0]);
+
+} catch (generalError) {
+statusLabel.innerText = "❌ File interface initialization failed.";
+document.getElementById('compileBtn').disabled = false;
+}
+});
+</script>
 </body>
 </html>
